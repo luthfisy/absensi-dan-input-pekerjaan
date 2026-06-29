@@ -1,0 +1,1003 @@
+<script>
+'use strict';
+
+const App = {
+  user:   null,
+  _rekap: [],
+  _editingUser: null,
+  _riwayatRaw: [],
+  _riwayatFiltered: [],
+  _riwayatPage: 1,
+  _riwayatPerPage: 10,
+  _allTugasRaw: [],
+  _allTugasFiltered: [],
+  _allTugasPage: 1,
+  _allTugasPerPage: 10,
+  _idleTimeout: 6 * 60 * 60 * 1000, // 6 jam
+  _idleCheckInterval: null,
+
+  // ─── BOOT ────────────────────────────────────────────────
+  init() {
+    const saved = localStorage.getItem('absensi_session');
+    const lastAct = parseInt(localStorage.getItem('absensi_last_activity') || 0);
+
+    if (saved && (!lastAct || Date.now() - lastAct <= this._idleTimeout)) {
+      try { 
+        this.user = JSON.parse(saved); 
+        this._startIdleWatcher();
+        this.showApp(); 
+      }
+      catch (_) { this.showLogin(); }
+    } else { 
+      if (saved) {
+        localStorage.removeItem('absensi_session');
+        localStorage.removeItem('absensi_last_activity');
+      }
+      this.showLogin(); 
+    }
+    this._startClock();
+  },
+
+  _startClock() {
+    const tick = () => {
+      const now = new Date(), pad = n => String(n).padStart(2,'0');
+      const el = document.getElementById('live-clock');
+      if (el) el.textContent = pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+      const de = document.getElementById('topbar-date');
+      if (de) de.textContent = now.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+    };
+    tick(); setInterval(tick, 1000);
+  },
+
+  // ─── IDLE WATCHER ─────────────────────────────────────────
+  _resetIdleTimer() {
+    if (!this.user) return;
+    localStorage.setItem('absensi_last_activity', Date.now());
+  },
+
+  _startIdleWatcher() {
+    // Reset timer when interaction happens
+    window.addEventListener('mousemove', () => this._resetIdleTimer(), { passive: true });
+    window.addEventListener('keydown', () => this._resetIdleTimer(), { passive: true });
+    window.addEventListener('click', () => this._resetIdleTimer(), { passive: true });
+    window.addEventListener('scroll', () => this._resetIdleTimer(), { passive: true });
+    window.addEventListener('touchstart', () => this._resetIdleTimer(), { passive: true });
+
+    this._resetIdleTimer();
+
+    if (this._idleCheckInterval) clearInterval(this._idleCheckInterval);
+    // Check every 1 minute
+    this._idleCheckInterval = setInterval(() => {
+      if (!this.user) return;
+      const lastAct = parseInt(localStorage.getItem('absensi_last_activity') || Date.now());
+      if (Date.now() - lastAct > this._idleTimeout) {
+        this._forceLogout();
+      }
+    }, 60000);
+  },
+
+  _forceLogout() {
+    localStorage.removeItem('absensi_session');
+    localStorage.removeItem('absensi_last_activity');
+    this.user = null;
+    if (this._idleCheckInterval) clearInterval(this._idleCheckInterval);
+    
+    Swal.fire({ icon:'warning', title:'Sesi Berakhir', text:'Sesi login Anda sudah berakhir karena tidak aktif selama 6 jam. Silakan login kembali.', confirmButtonColor:'#059669' }).then(() => {
+      document.getElementById('page-app').classList.add('d-none');
+      document.getElementById('page-login').classList.remove('d-none');
+      document.getElementById('inp-username').value = '';
+      document.getElementById('inp-password').value = '';
+    });
+  },
+
+  // ─── LOGIN ───────────────────────────────────────────────
+  showLogin() {
+    document.getElementById('page-login').classList.remove('d-none');
+    document.getElementById('page-app').classList.add('d-none');
+    document.getElementById('btn-login').onclick = () => this._doLogin();
+    document.getElementById('inp-password').onkeydown = e => { if (e.key === 'Enter') this._doLogin(); };
+    document.getElementById('inp-username').onkeydown = e => { if (e.key === 'Enter') document.getElementById('inp-password').focus(); };
+    const tog = document.getElementById('btn-toggle-pwd');
+    tog.onclick = () => {
+      const inp = document.getElementById('inp-password');
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+      tog.querySelector('i').className = 'bi bi-eye' + (inp.type === 'text' ? '-slash' : '') + ' text-muted';
+    };
+  },
+
+  _doLogin() {
+    const username = document.getElementById('inp-username').value.trim();
+    const password = document.getElementById('inp-password').value;
+    if (!username || !password) { this._swal('warning', 'Peringatan', 'Username dan password harus diisi.'); return; }
+
+    const btnText = document.getElementById('login-text');
+    const spinner = document.getElementById('login-spinner');
+    const btn     = document.getElementById('btn-login');
+    btnText.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Memverifikasi...';
+    spinner.classList.remove('d-none'); btn.disabled = true;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.disabled = false;
+        btnText.innerHTML = '<i class="bi bi-box-arrow-in-right me-2"></i>Masuk';
+        spinner.classList.add('d-none');
+        if (res.success) {
+          this.user = res.user;
+          localStorage.setItem('absensi_session', JSON.stringify(res.user));
+          this._startIdleWatcher();
+          this.showApp();
+        } else { this._swal('error', 'Login Gagal', res.message); }
+      })
+      .withFailureHandler(err => {
+        btn.disabled = false;
+        btnText.innerHTML = '<i class="bi bi-box-arrow-in-right me-2"></i>Masuk';
+        spinner.classList.add('d-none');
+        this._swal('error', 'Server Error', err.message || 'Terjadi kesalahan server.');
+      })
+      .login(username, password);
+  },
+
+  logout() {
+    Swal.fire({ title:'Keluar dari aplikasi?', text:'Sesi Anda akan diakhiri.', icon:'question',
+      showCancelButton:true, confirmButtonColor:'#059669', cancelButtonColor:'#94a3b8',
+      confirmButtonText:'Ya, Keluar', cancelButtonText:'Batal'
+    }).then(r => {
+      if (!r.isConfirmed) return;
+      localStorage.removeItem('absensi_session');
+      localStorage.removeItem('absensi_last_activity');
+      if (this._idleCheckInterval) clearInterval(this._idleCheckInterval);
+      this.user = null;
+      document.getElementById('page-app').classList.add('d-none');
+      document.getElementById('page-login').classList.remove('d-none');
+      document.getElementById('inp-username').value = '';
+      document.getElementById('inp-password').value = '';
+    });
+  },
+
+  // ─── APP SHELL ────────────────────────────────────────────
+  showApp() {
+    document.getElementById('page-login').classList.add('d-none');
+    document.getElementById('page-app').classList.remove('d-none');
+
+    document.getElementById('sidebar-nama').textContent   = this.user.nama;
+    document.getElementById('sidebar-avatar').textContent = this.user.nama.charAt(0).toUpperCase();
+    document.getElementById('dash-nama').textContent      = this.user.nama.split(' ')[0];
+
+    const roleEl = document.getElementById('sidebar-role-badge');
+    roleEl.textContent = this.user.role;
+    roleEl.className = 'user-role role-' + this.user.role.toLowerCase();
+
+    // Reset semua role-based menu ke default dulu (penting saat switch user)
+    document.querySelectorAll('.owner-only').forEach(el => el.classList.add('d-none'));
+    document.querySelectorAll('.admin-only').forEach(el => el.classList.add('d-none'));
+    document.querySelectorAll('.user-only').forEach(el => el.classList.add('d-none'));
+
+    // Tampilkan menu sesuai role
+    const role = this.user.role;
+    if (role === 'Owner') {
+      document.querySelectorAll('.owner-only').forEach(el => el.classList.remove('d-none'));
+    } else if (role === 'Admin') {
+      document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('d-none'));
+    } else {
+      document.querySelectorAll('.user-only').forEach(el => el.classList.remove('d-none'));
+    }
+
+    const _d = new Date();
+    const today = _d.getFullYear() + '-' + String(_d.getMonth()+1).padStart(2,'0') + '-' + String(_d.getDate()).padStart(2,'0');
+    const tInp  = document.getElementById('tugas-tanggal');
+    if (tInp) tInp.value = today;
+
+    this._loadJenisAktivitas();
+    
+    // Set view default sesuai role
+    let defaultView = 'dashboard';
+    if (role === 'Admin') defaultView = 'kelola-user';
+    if (role === 'Owner') defaultView = 'rekap';
+    this.showView(defaultView);
+
+    // Password strength meter
+    const pwdBaru = document.getElementById('pwd-baru');
+    if (pwdBaru) {
+      pwdBaru.addEventListener('input', () => this._checkPwdStrength(pwdBaru.value));
+    }
+  },
+
+  // ─── SIDEBAR ─────────────────────────────────────────────
+  toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('sidebar-overlay').classList.toggle('show');
+  },
+  closeSidebar() {
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebar-overlay').classList.remove('show');
+  },
+
+  // ─── VIEWS ───────────────────────────────────────────────
+  showView(name) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const target = document.getElementById('view-' + name);
+    if (target) target.classList.add('active');
+
+    document.querySelectorAll('.sidebar-link[data-view]').forEach(l => l.classList.remove('active'));
+    const link = document.querySelector('.sidebar-link[data-view="' + name + '"]');
+    if (link) link.classList.add('active');
+
+    const titles = {
+      'dashboard':'Dashboard', 'input-tugas':'Input Kegiatan', 'riwayat':'Riwayat Kegiatan',
+      'rekap':'Rekap Kehadiran', 'all-tugas':'Semua Kegiatan',
+      'kelola-user':'Kelola User', 'kategori':'Kelola Referensi',
+      'ubah-password':'Ubah Password'
+    };
+    document.getElementById('topbar-title').textContent = titles[name] || name;
+    this.closeSidebar();
+
+    if (name === 'dashboard')    { this._checkAbsensi(); this.loadDashboardKegiatan(); }
+    if (name === 'riwayat')      { this.loadRiwayatKegiatan(); }
+    if (name === 'rekap')        { this.loadRekap(); }
+    if (name === 'all-tugas')    { this.loadSemuaTugas(); }
+    if (name === 'kelola-user')  { this.loadUsers(); }
+    if (name === 'kategori')     { this.loadKategori(); }
+    if (name === 'ubah-password'){ document.getElementById('form-ubah-pwd').reset(); document.getElementById('pwd-strength-wrap').style.display='none'; }
+  },
+
+  // ─── ABSENSI ─────────────────────────────────────────────
+  _checkAbsensi() {
+    const box = document.getElementById('absen-status-display');
+    box.innerHTML = '<div class="spinner-border text-emerald" role="status"></div>';
+    google.script.run
+      .withSuccessHandler(res => this._renderAbsensi(res))
+      .withFailureHandler(err => { box.innerHTML = '<p class="text-danger small">' + (err.message||'Gagal') + '</p>'; })
+      .getAbsensiStatus(this.user.username);
+  },
+
+  _renderAbsensi(data) {
+    const box = document.getElementById('absen-status-display');
+    if (!box) return;
+    if (data.error) { box.innerHTML = '<p class="text-danger small">Error: ' + data.error + '</p>'; return; }
+
+    let msgTutup = '';
+    let btnMasuk = '<button class="btn btn-emerald px-4" onclick="App._showAbsenModal()"><i class="bi bi-box-arrow-in-right me-2"></i>Absen Masuk</button>';
+    let btnPulang = '<button class="btn btn-warning fw-semibold px-4" onclick="App._doAbsenPulang()"><i class="bi bi-box-arrow-right me-2"></i>Absen Pulang</button>';
+
+    if (data.status !== 'selesai' && !data.isOpen) {
+      msgTutup = '<div class="alert alert-danger mt-3 mb-0 py-2 small fw-bold"><i class="bi bi-lock-fill me-1"></i>Sistem Absensi Ditutup (07:00 - 20:00 WIB)<br><small class="fw-normal">Waktu server saat ini: '+data.serverTime+'</small></div>';
+      btnMasuk = '<button class="btn btn-secondary px-4 disabled"><i class="bi bi-box-arrow-in-right me-2"></i>Absen Masuk <span class="badge border ms-1" style="font-size:0.6rem">DITUTUP</span></button>';
+      btnPulang = '<button class="btn btn-secondary fw-semibold px-4 disabled"><i class="bi bi-box-arrow-right me-2"></i>Absen Pulang <span class="badge border ms-1" style="font-size:0.6rem">DITUTUP</span></button>';
+    }
+
+    if (data.status === 'belum_absen') {
+      box.innerHTML = '<div class="absen-icon-wrap" style="background:#d1fae5"><i class="bi bi-clock-history" style="color:#059669"></i></div><p class="fw-bold mb-1" style="color:#065f46">Belum Absen Masuk</p><p class="text-muted small mb-3">Segera lakukan absen untuk memulai hari kerja</p>' + btnMasuk + msgTutup;
+    } else if (data.status === 'sudah_masuk') {
+      const locMasuk = data.lokasiMasuk
+        ? '<a href="'+this._mapsUrl(data.lokasiMasuk.lat, data.lokasiMasuk.lng)+'" target="_blank" class="lokasi-link"><i class="bi bi-geo-alt-fill me-1"></i>Lihat lokasi masuk</a>'
+        : '<span class="text-muted" style="font-size:.75rem"><i class="bi bi-geo-alt me-1"></i>Lokasi tidak tercatat</span>';
+      box.innerHTML = '<div class="absen-icon-wrap" style="background:#dbeafe"><i class="bi bi-person-workspace" style="color:#2563eb;font-size:1.8rem"></i></div><p class="fw-bold mb-1" style="color:#1e40af">Sedang Bekerja</p><div class="absen-time mb-1">Masuk: <strong>'+data.jamMasuk+'</strong> &bull; <span class="badge badge-wfh">'+data.statusKehadiran+'</span></div><div class="mb-3">'+locMasuk+'</div>' + btnPulang + msgTutup;
+    } else {
+      const locMasuk  = data.lokasiMasuk  ? '<a href="'+this._mapsUrl(data.lokasiMasuk.lat,  data.lokasiMasuk.lng)+'"  target="_blank" class="lokasi-link me-3"><i class="bi bi-geo-alt-fill me-1"></i>Lokasi Masuk</a>'  : '';
+      const locPulang = data.lokasiPulang ? '<a href="'+this._mapsUrl(data.lokasiPulang.lat, data.lokasiPulang.lng)+'" target="_blank" class="lokasi-link"><i class="bi bi-geo-alt-fill me-1"></i>Lokasi Pulang</a>' : '';
+      const locRow = (locMasuk || locPulang) ? '<div class="mb-2" style="font-size:.8rem">'+locMasuk+locPulang+'</div>' : '';
+      box.innerHTML = '<div class="absen-icon-wrap" style="background:#d1fae5"><i class="bi bi-check-circle-fill" style="color:#059669;font-size:1.8rem"></i></div><p class="fw-bold mb-1" style="color:#065f46">Absensi Hari Ini Lengkap</p><div class="absen-time mb-1">Masuk: <strong>'+data.jamMasuk+'</strong> | Pulang: <strong>'+data.jamPulang+'</strong></div>'+locRow+'<span class="badge badge-hadir py-2 px-3 mt-2" style="font-size:.8rem"><i class="bi bi-check2 me-1"></i>Semua absensi telah tercatat</span>';
+    }
+  },
+
+  _showAbsenModal() { new bootstrap.Modal(document.getElementById('modal-absen')).show(); },
+
+  // Ambil koordinat GPS — resolve null jika ditolak/tidak tersedia
+  _getLocation() {
+    return new Promise(resolve => {
+      if (!navigator.geolocation) { resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, acc: Math.round(pos.coords.accuracy) }),
+        ()  => resolve(null),
+        { timeout: 8000, maximumAge: 30000, enableHighAccuracy: true }
+      );
+    });
+  },
+
+  _mapsUrl(lat, lng) {
+    return 'https://www.google.com/maps?q=' + lat + ',' + lng;
+  },
+
+  doAbsenMasuk(status) {
+    bootstrap.Modal.getInstance(document.getElementById('modal-absen'))?.hide();
+
+    Swal.fire({ title:'Mengambil lokasi...', html:'<i class="bi bi-geo-alt-fill" style="color:#059669;font-size:1.5rem"></i><br><small class="text-muted">Mohon izinkan akses lokasi di browser</small>', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+
+    this._getLocation().then(lokasi => {
+      Swal.fire({ title:'Memproses absen masuk...', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+      google.script.run
+        .withSuccessHandler(res => {
+          Swal.close();
+          if (res.success) {
+            const lokasiInfo = (lokasi && res.lokasiTercatat)
+              ? '<br><small><i class="bi bi-geo-alt-fill text-success me-1"></i>Lokasi tercatat</small>'
+              : '<br><small class="text-muted"><i class="bi bi-geo-alt me-1"></i>Lokasi tidak tersedia</small>';
+            Swal.fire({ icon:'success', title:'Absen Masuk Berhasil!', html:'Status: <b>'+status+'</b><br>Jam Masuk: <b>'+res.jamMasuk+'</b>'+lokasiInfo, confirmButtonColor:'#059669', timer:3500, timerProgressBar:true });
+            this._checkAbsensi();
+          } else { this._swal('error', 'Gagal', res.message); }
+        })
+        .withFailureHandler(err => this._swal('error', 'Error', err.message))
+        .absenMasuk(this.user.username, status, lokasi);
+    });
+  },
+
+  _doAbsenPulang() {
+    Swal.fire({ title:'Konfirmasi Absen Pulang', text:'Anda yakin ingin absen pulang sekarang?', icon:'question',
+      showCancelButton:true, confirmButtonColor:'#059669', cancelButtonColor:'#94a3b8',
+      confirmButtonText:'Ya, Absen Pulang', cancelButtonText:'Batal'
+    }).then(r => {
+      if (!r.isConfirmed) return;
+
+      Swal.fire({ title:'Mengambil lokasi...', html:'<i class="bi bi-geo-alt-fill" style="color:#059669;font-size:1.5rem"></i><br><small class="text-muted">Mohon izinkan akses lokasi di browser</small>', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+
+      this._getLocation().then(lokasi => {
+        Swal.fire({ title:'Memproses absen pulang...', allowOutsideClick:false, didOpen:()=>Swal.showLoading() });
+        google.script.run
+          .withSuccessHandler(res => {
+            Swal.close();
+            if (res.success) {
+              const lokasiInfo = (lokasi && res.lokasiTercatat)
+                ? '<br><small><i class="bi bi-geo-alt-fill text-success me-1"></i>Lokasi tercatat</small>'
+                : '<br><small class="text-muted"><i class="bi bi-geo-alt me-1"></i>Lokasi tidak tersedia</small>';
+              Swal.fire({ icon:'success', title:'Absen Pulang Berhasil!', html:'Jam Pulang: <b>'+res.jamPulang+'</b>'+lokasiInfo, confirmButtonColor:'#059669', timer:3500, timerProgressBar:true });
+              this._checkAbsensi();
+            } else { this._swal('error', 'Gagal', res.message); }
+          })
+          .withFailureHandler(err => this._swal('error', 'Error', err.message))
+          .absenPulang(this.user.username, lokasi);
+      });
+    });
+  },
+
+  // ─── TUGAS ───────────────────────────────────────────────
+  _loadJenisAktivitas() {
+    google.script.run
+      .withSuccessHandler(list => {
+        const sel = document.getElementById('tugas-jenis');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— Pilih Kegiatan —</option>';
+        list.forEach(v => { const o = document.createElement('option'); o.value = o.textContent = v; sel.appendChild(o); });
+      })
+      .getJenisAktivitas();
+  },
+
+  submitTugas(e) {
+    e.preventDefault();
+    const form = {
+      tanggal:         document.getElementById('tugas-tanggal').value,
+      jenisAktivitas:  document.getElementById('tugas-jenis').value,
+      detailPekerjaan: document.getElementById('tugas-detail').value,
+      instansi:        document.getElementById('tugas-instansi').value,
+      pic:             document.getElementById('tugas-pic').value,
+      alamat:          document.getElementById('tugas-alamat').value,
+      waktuMulai:      document.getElementById('tugas-mulai').value,
+      waktuSelesai:    document.getElementById('tugas-selesai').value,
+      statusProgres:   document.getElementById('tugas-status').value,
+      linkBukti:       document.getElementById('tugas-link').value,
+      kendala:         document.getElementById('tugas-kendala').value
+    };
+    const btn = document.getElementById('btn-submit-tugas');
+    const spn = document.getElementById('submit-spinner');
+    btn.disabled = true; spn.classList.remove('d-none');
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.disabled = false; spn.classList.add('d-none');
+        if (res.success) {
+          Swal.fire({ icon:'success', title:'Kegiatan Tersimpan!', html:'ID: <code>'+res.idTugas+'</code>', confirmButtonColor:'#059669', timer:2800, timerProgressBar:true, showConfirmButton:false });
+          this.resetTugasForm();
+        } else { this._swal('error', 'Gagal Menyimpan', res.message); }
+      })
+      .withFailureHandler(err => { btn.disabled = false; spn.classList.add('d-none'); this._swal('error', 'Error', err.message); })
+      .submitTugas(this.user.username, form);
+  },
+
+  resetTugasForm() {
+    document.getElementById('form-tugas').reset();
+    const _rd = new Date();
+    document.getElementById('tugas-tanggal').value = _rd.getFullYear() + '-' + String(_rd.getMonth()+1).padStart(2,'0') + '-' + String(_rd.getDate()).padStart(2,'0');
+  },
+
+  _localToday() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  },
+
+  _filterByUser(list) {
+    const namaUser = String(this.user.nama || '').trim().toLowerCase();
+    if (!namaUser) return list;
+    return list.filter(t => String(t.nama || '').trim().toLowerCase() === namaUser);
+  },
+
+  loadDashboardKegiatan() {
+    const recentBox = document.getElementById('dash-recent-tasks');
+    recentBox.innerHTML = '<div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>';
+    google.script.run
+      .withSuccessHandler(data => {
+        const all  = Array.isArray(data) ? data : [];
+        const list = this._filterByUser(all);
+        const today = this._localToday();
+        const todayList = list.filter(t => t.tanggal === today);
+        this._renderDashStats(todayList);
+        this._renderRecentTasks(list);
+      })
+      .withFailureHandler(err => {
+        recentBox.innerHTML = '<div class="p-4 text-danger small">' + (err && err.message || 'Gagal') + '</div>';
+      })
+      .getRiwayatKegiatan(this.user.username);
+  },
+
+  loadRiwayatKegiatan() {
+    const box = document.getElementById('table-riwayat-container');
+    box.innerHTML = '<div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>';
+    document.getElementById('riwayat-pagination-container').style.setProperty('display', 'none', 'important');
+    google.script.run
+      .withSuccessHandler(data => {
+        const all  = Array.isArray(data) ? data : [];
+        this._riwayatRaw = this._filterByUser(all);
+        document.getElementById('filter-riwayat-tanggal').value = '';
+        this.filterRiwayat();
+      })
+      .withFailureHandler(err => {
+        const msg = err && err.message ? err.message : 'Gagal memuat data';
+        box.innerHTML = '<div class="p-4 text-danger small"><i class="bi bi-exclamation-triangle me-1"></i>' + msg + '</div>';
+      })
+      .getRiwayatKegiatan(this.user.username);
+  },
+
+  _renderDashStats(data) {
+    const c = { 'Selesai':0, 'Sedang Berjalan':0, 'Tertunda':0 };
+    data.forEach(d => { if (c[d.statusProgres] !== undefined) c[d.statusProgres]++; });
+    document.getElementById('stat-selesai').textContent  = c['Selesai'];
+    document.getElementById('stat-jalan').textContent    = c['Sedang Berjalan'];
+    document.getElementById('stat-tertunda').textContent = c['Tertunda'];
+    document.getElementById('stat-total').textContent    = data.length;
+  },
+
+  _renderRecentTasks(data) {
+    const box = document.getElementById('dash-recent-tasks');
+    if (!data.length) {
+      box.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i><p>Belum ada kegiatan.<br><a href="#" onclick="App.showView(\'input-tugas\');return false;" class="text-emerald">+ Tambah kegiatan pertama</a></p></div>';
+      return;
+    }
+    const dotMap = { 'Selesai':'dot-selesai', 'Sedang Berjalan':'dot-berjalan', 'Tertunda':'dot-tertunda' };
+    box.innerHTML = data.slice(0, 5).map(t =>
+      '<div class="recent-task-row">' +
+        '<div class="task-dot ' + (dotMap[t.statusProgres]||'') + '"></div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div class="fw-semibold text-truncate">' + this._esc(t.jenisAktivitas) + (t.instansi ? ' <span class="text-muted fw-normal">— '+this._esc(t.instansi)+'</span>' : '') + '</div>' +
+          '<div class="text-muted text-truncate" style="font-size:.77rem">' + (t.tanggal ? '<span class="me-2">'+t.tanggal+'</span>' : '') + this._esc(t.detailPekerjaan) + '</div>' +
+        '</div>' +
+        '<div>' + this._statusBadge(t.statusProgres) + '</div>' +
+      '</div>'
+    ).join('');
+  },
+
+  filterRiwayat() {
+    const tgl = document.getElementById('filter-riwayat-tanggal').value;
+    if (tgl) {
+      this._riwayatFiltered = this._riwayatRaw.filter(t => t.tanggal === tgl);
+    } else {
+      this._riwayatFiltered = [...this._riwayatRaw];
+    }
+    this._riwayatPage = 1;
+    this._updateRiwayatStats();
+    this.renderRiwayatPage();
+  },
+
+  _updateRiwayatStats() {
+    let s = 0, b = 0, t = 0;
+    this._riwayatFiltered.forEach(d => {
+      if(d.statusProgres === 'Selesai') s++;
+      else if(d.statusProgres === 'Sedang Berjalan') b++;
+      else if(d.statusProgres === 'Tertunda') t++;
+    });
+    document.getElementById('riwayat-stat-selesai').textContent = s;
+    document.getElementById('riwayat-stat-berjalan').textContent = b;
+    document.getElementById('riwayat-stat-tertunda').textContent = t;
+  },
+
+  changeRiwayatPerPage() {
+    this._riwayatPerPage = parseInt(document.getElementById('riwayat-per-page').value) || 10;
+    this._riwayatPage = 1;
+    this.renderRiwayatPage();
+  },
+
+  changeRiwayatPage(diff) {
+    const maxPage = Math.ceil(this._riwayatFiltered.length / this._riwayatPerPage);
+    let newPage = this._riwayatPage + diff;
+    if (newPage < 1) newPage = 1;
+    if (newPage > maxPage) newPage = maxPage;
+    this._riwayatPage = newPage;
+    this.renderRiwayatPage();
+  },
+
+  renderRiwayatPage() {
+    const box = document.getElementById('table-riwayat-container');
+    const pageCont = document.getElementById('riwayat-pagination-container');
+    const data = this._riwayatFiltered;
+
+    if (!data.length) { 
+      box.innerHTML = '<div class="empty-state"><i class="bi bi-calendar-x"></i><p>Belum ada kegiatan tercatat</p></div>'; 
+      pageCont.style.setProperty('display', 'none', 'important');
+      return; 
+    }
+
+    const total = data.length;
+    const maxPage = Math.ceil(total / this._riwayatPerPage);
+    if (this._riwayatPage > maxPage) this._riwayatPage = maxPage;
+    if (this._riwayatPage < 1) this._riwayatPage = 1;
+
+    const startIdx = (this._riwayatPage - 1) * this._riwayatPerPage;
+    const endIdx = Math.min(startIdx + this._riwayatPerPage, total);
+    const chunk = data.slice(startIdx, endIdx);
+
+    box.innerHTML =
+      '<table class="table table-hover mb-0">' +
+        '<thead><tr><th>#</th><th>Tanggal</th><th>Jenis Kegiatan</th><th>Detail</th><th>Instansi</th><th>PIC</th><th>Mulai</th><th>Selesai</th><th>Status</th><th>Bukti</th></tr></thead>' +
+        '<tbody>' +
+        chunk.map((t, i) =>
+          '<tr>' +
+            '<td class="text-muted">'+(startIdx + i + 1)+'</td>' +
+            '<td nowrap class="text-muted" style="font-size:.82rem">'+this._esc(t.tanggal||'')+'</td>' +
+            '<td class="fw-semibold">'+this._esc(t.jenisAktivitas)+'</td>' +
+            '<td style="max-width:180px"><div class="text-truncate" title="'+this._esc(t.detailPekerjaan)+'">'+this._esc(t.detailPekerjaan)+'</div>' +
+              (t.kendala ? '<div class="text-danger mt-1" style="font-size:.73rem"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+this._esc(t.kendala)+'</div>' : '') +
+            '</td>' +
+            '<td><div class="text-truncate" style="max-width:130px" title="'+this._esc(t.instansi)+'">'+this._esc(t.instansi||'—')+'</div>' +
+              (t.alamat ? '<div class="text-muted" style="font-size:.73rem;max-width:130px">'+this._esc(t.alamat)+'</div>' : '') +
+            '</td>' +
+            '<td>'+this._esc(t.pic||'—')+'</td>' +
+            '<td>'+(t.waktuMulai||'—')+'</td>' +
+            '<td>'+(t.waktuSelesai||'—')+'</td>' +
+            '<td>'+this._statusBadge(t.statusProgres)+'</td>' +
+            '<td>'+(t.linkBukti ? '<a href="'+this._esc(t.linkBukti)+'" target="_blank" class="btn btn-sm btn-outline-secondary" style="font-size:.7rem"><i class="bi bi-link-45deg"></i></a>' : '—')+'</td>' +
+          '</tr>'
+        ).join('') +
+        '</tbody></table>';
+
+    pageCont.style.setProperty('display', 'flex', 'important');
+    document.getElementById('riwayat-page-info').textContent = 'Menampilkan ' + (startIdx + 1) + '-' + endIdx + ' dari ' + total + ' data';
+    document.getElementById('btn-riwayat-prev').disabled = (this._riwayatPage === 1);
+    document.getElementById('btn-riwayat-next').disabled = (this._riwayatPage === maxPage);
+  },
+
+  // ─── OWNER: REKAP ────────────────────────────────────────
+  loadRekap() {
+    document.getElementById('table-rekap-container').innerHTML = '<div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>';
+    google.script.run
+      .withSuccessHandler(data => {
+        if (data.error) { document.getElementById('table-rekap-container').innerHTML = '<div class="p-4 text-danger">'+data.error+'</div>'; return; }
+        this._rekap = data;
+        this._updateRekapStats(data);
+        this._renderRekap(data);
+      })
+      .withFailureHandler(err => { document.getElementById('table-rekap-container').innerHTML = '<div class="p-4 text-danger">'+err.message+'</div>'; })
+      .getRekapAbsensi(this.user.username);
+  },
+
+  _updateRekapStats(data) {
+    const today = new Date().toISOString().split('T')[0];
+    const c = { hadir:0, wfh:0, izin:0, sakit:0 };
+    data.filter(d => d.tanggal === today).forEach(d => {
+      if (d.statusKehadiran==='Hadir'||d.statusKehadiran==='WFO') c.hadir++;
+      else if (d.statusKehadiran==='WFH')   c.wfh++;
+      else if (d.statusKehadiran==='Izin')  c.izin++;
+      else if (d.statusKehadiran==='Sakit') c.sakit++;
+    });
+    document.getElementById('rc-hadir').textContent = c.hadir;
+    document.getElementById('rc-wfh').textContent   = c.wfh;
+    document.getElementById('rc-izin').textContent  = c.izin;
+    document.getElementById('rc-sakit').textContent = c.sakit;
+  },
+
+  filterRekap() {
+    const tgl = document.getElementById('filter-tanggal').value;
+    this._renderRekap(tgl ? this._rekap.filter(d => d.tanggal === tgl) : this._rekap);
+  },
+
+  _renderRekap(data) {
+    const box = document.getElementById('table-rekap-container');
+    if (!data.length) { box.innerHTML = '<div class="empty-state"><i class="bi bi-calendar-x"></i><p>Tidak ada data</p></div>'; return; }
+    const sorted = [...data].sort((a,b) => b.tanggal.localeCompare(a.tanggal));
+    const mkLokasi = (l) => l
+      ? '<a href="'+this._mapsUrl(l.lat, l.lng)+'" target="_blank" class="lokasi-link" title="Lat: '+Number(l.lat).toFixed(5)+', Lng: '+Number(l.lng).toFixed(5)+'"><i class="bi bi-geo-alt-fill"></i></a>'
+      : '<span class="text-muted" style="font-size:.8rem">—</span>';
+    box.innerHTML = '<table class="table table-hover"><thead><tr><th>#</th><th>Tanggal</th><th>Nama</th><th>Jam Masuk</th><th>Lok. Masuk</th><th>Jam Pulang</th><th>Lok. Pulang</th><th>Status</th></tr></thead><tbody>' +
+      sorted.map((d,i) => '<tr><td class="text-muted">'+(i+1)+'</td><td>'+this._fmtTgl(d.tanggal)+'</td><td class="fw-semibold">'+this._esc(d.nama)+'</td><td>'+(d.jamMasuk||'—')+'</td><td>'+mkLokasi(d.lokasiMasuk)+'</td><td>'+(d.jamPulang||'<span class="text-muted">—</span>')+'</td><td>'+mkLokasi(d.lokasiPulang)+'</td><td>'+this._kehadiranBadge(d.statusKehadiran)+'</td></tr>').join('') +
+      '</tbody></table>';
+  },
+
+  loadSemuaTugas() {
+    const box = document.getElementById('table-all-tugas-container');
+    box.innerHTML = '<div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>';
+    document.getElementById('all-tugas-pagination-container').style.setProperty('display', 'none', 'important');
+    google.script.run
+      .withSuccessHandler(data => {
+        if (!data||data.error) { box.innerHTML = '<div class="p-4 text-danger">'+(data?data.error:'Error')+'</div>'; return; }
+        const all = Array.isArray(data) ? data : [];
+        this._allTugasRaw = [...all].sort((a,b) => b.tanggal.localeCompare(a.tanggal));
+        
+        const users = [...new Set(all.map(d => this._esc(d.nama)))].filter(Boolean).sort();
+        const selUser = document.getElementById('filter-all-tugas-user');
+        const currUserFilter = selUser.value;
+        selUser.innerHTML = '<option value="">Semua User</option>' + users.map(u => `<option value="${u}">${u}</option>`).join('');
+        if (users.includes(currUserFilter)) selUser.value = currUserFilter;
+
+        this.filterAllTugas();
+      })
+      .withFailureHandler(err => { box.innerHTML = '<div class="p-4 text-danger">'+err.message+'</div>'; })
+      .getSemuaTugas(this.user.username);
+  },
+
+  filterAllTugas() {
+    const tgl = document.getElementById('filter-all-tugas-tanggal').value;
+    const usr = document.getElementById('filter-all-tugas-user').value;
+    
+    this._allTugasFiltered = this._allTugasRaw.filter(t => {
+      let match = true;
+      if (tgl && t.tanggal !== tgl) match = false;
+      if (usr && t.nama !== usr) match = false;
+      return match;
+    });
+
+    this._allTugasPage = 1;
+    this._updateAllTugasStats();
+    this.renderAllTugasPage();
+  },
+
+  _updateAllTugasStats() {
+    let s = 0, b = 0, t = 0;
+    this._allTugasFiltered.forEach(d => {
+      if(d.statusProgres === 'Selesai') s++;
+      else if(d.statusProgres === 'Sedang Berjalan') b++;
+      else if(d.statusProgres === 'Tertunda') t++;
+    });
+    document.getElementById('all-tugas-stat-selesai').textContent = s;
+    document.getElementById('all-tugas-stat-berjalan').textContent = b;
+    document.getElementById('all-tugas-stat-tertunda').textContent = t;
+  },
+
+  changeAllTugasPerPage() {
+    this._allTugasPerPage = parseInt(document.getElementById('all-tugas-per-page').value) || 10;
+    this._allTugasPage = 1;
+    this.renderAllTugasPage();
+  },
+
+  changeAllTugasPage(diff) {
+    const maxPage = Math.ceil(this._allTugasFiltered.length / this._allTugasPerPage);
+    let newPage = this._allTugasPage + diff;
+    if (newPage < 1) newPage = 1;
+    if (newPage > maxPage) newPage = maxPage;
+    this._allTugasPage = newPage;
+    this.renderAllTugasPage();
+  },
+
+  renderAllTugasPage() {
+    const box = document.getElementById('table-all-tugas-container');
+    const pageCont = document.getElementById('all-tugas-pagination-container');
+    const data = this._allTugasFiltered;
+
+    if (!data.length) { 
+      box.innerHTML = '<div class="empty-state"><i class="bi bi-inbox"></i><p>Belum ada data</p></div>'; 
+      pageCont.style.setProperty('display', 'none', 'important');
+      return; 
+    }
+
+    const total = data.length;
+    const maxPage = Math.ceil(total / this._allTugasPerPage);
+    if (this._allTugasPage > maxPage) this._allTugasPage = Math.max(1, maxPage);
+    if (this._allTugasPage < 1) this._allTugasPage = 1;
+
+    const startIdx = (this._allTugasPage - 1) * this._allTugasPerPage;
+    const endIdx = Math.min(startIdx + this._allTugasPerPage, total);
+    const chunk = data.slice(startIdx, endIdx);
+
+    box.innerHTML = 
+      '<table class="table table-hover mb-0"><thead><tr><th>#</th><th>Tanggal</th><th>Nama</th><th>Jenis</th><th>Detail</th><th>Instansi</th><th>PIC</th><th>Waktu</th><th>Status</th><th>Bukti</th></tr></thead><tbody>' +
+      chunk.map((d,i) =>
+        '<tr><td class="text-muted">'+(startIdx + i + 1)+'</td><td>'+this._fmtTgl(d.tanggal)+'</td><td class="fw-semibold">'+this._esc(d.nama)+'</td><td>'+this._esc(d.jenisAktivitas)+'</td>' +
+        '<td style="max-width:170px"><div class="text-truncate" title="'+this._esc(d.detailPekerjaan)+'">'+this._esc(d.detailPekerjaan)+'</div>' +
+          (d.kendala ? '<div class="text-danger mt-1" style="font-size:.73rem"><i class="bi bi-exclamation-triangle-fill me-1"></i>'+this._esc(d.kendala)+'</div>' : '') +
+        '</td>' +
+        '<td><div class="text-truncate" style="max-width:120px">'+this._esc(d.instansi||'—')+'</div>' + 
+          (d.alamat ? '<div class="text-muted" style="font-size:.73rem;max-width:130px">'+this._esc(d.alamat)+'</div>' : '') +
+        '</td>' +
+        '<td>'+this._esc(d.pic||'—')+'</td>' +
+        '<td nowrap class="text-muted" style="font-size:.78rem">'+(d.waktuMulai||'')+(d.waktuSelesai?' – '+d.waktuSelesai:'')+'</td>' +
+        '<td>'+this._statusBadge(d.statusProgres)+'</td>' +
+        '<td>'+(d.linkBukti ? '<a href="'+this._esc(d.linkBukti)+'" target="_blank" class="btn btn-sm btn-outline-secondary" style="font-size:.7rem"><i class="bi bi-link-45deg"></i></a>' : '—')+'</td></tr>'
+      ).join('') + '</tbody></table>';
+
+    pageCont.style.setProperty('display', 'flex', 'important');
+    document.getElementById('all-tugas-page-info').textContent = 'Menampilkan ' + (startIdx + 1) + '-' + endIdx + ' dari ' + total + ' data';
+    document.getElementById('btn-all-tugas-prev').disabled = (this._allTugasPage === 1);
+    document.getElementById('btn-all-tugas-next').disabled = (this._allTugasPage === maxPage || maxPage === 0);
+  },
+
+  // ─── ADMIN: KELOLA USER ───────────────────────────────────
+  loadUsers() {
+    document.getElementById('table-users-container').innerHTML = '<div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>';
+    google.script.run
+      .withSuccessHandler(data => {
+        const box = document.getElementById('table-users-container');
+        if (data.error) { box.innerHTML = '<div class="p-4 text-danger">'+data.error+'</div>'; return; }
+        if (!data.length) { box.innerHTML = '<div class="empty-state"><i class="bi bi-people"></i><p>Belum ada user</p></div>'; return; }
+        box.innerHTML = '<table class="table table-hover"><thead><tr><th>#</th><th>ID</th><th>Nama Lengkap</th><th>Username</th><th>Role</th><th>Status</th><th>Aksi</th></tr></thead><tbody>' +
+          data.map((u,i) =>
+            '<tr>' +
+              '<td class="text-muted">'+(i+1)+'</td>' +
+              '<td><small class="font-monospace text-muted">'+this._esc(u.id)+'</small></td>' +
+              '<td class="fw-semibold">'+this._esc(u.nama)+'</td>' +
+              '<td>'+this._esc(u.username)+'</td>' +
+              '<td>'+this._roleBadge(u.role)+'</td>' +
+              '<td><span class="badge '+(u.status==='Aktif'?'badge-hadir':'badge-sakit')+'">'+this._esc(u.status)+'</span></td>' +
+              '<td><div class="d-flex gap-1">' +
+                '<button class="btn btn-sm btn-outline-primary" onclick="App.showEditUserModal('+JSON.stringify(u)+')" title="Edit"><i class="bi bi-pencil"></i></button>' +
+                (u.username !== this.user.username ?
+                  '<button class="btn btn-sm '+(u.status==='Aktif'?'btn-outline-warning':'btn-outline-success')+'" onclick="App.toggleStatus(\''+this._esc(u.username)+'\',\''+this._esc(u.status)+'\')" title="'+(u.status==='Aktif'?'Nonaktifkan':'Aktifkan')+'"><i class="bi bi-'+(u.status==='Aktif'?'pause-circle':'play-circle')+'"></i></button>' : '') +
+              '</div></td>' +
+            '</tr>'
+          ).join('') + '</tbody></table>';
+      })
+      .withFailureHandler(err => { document.getElementById('table-users-container').innerHTML = '<div class="p-4 text-danger">'+err.message+'</div>'; })
+      .getUsers(this.user.username);
+  },
+
+  showAddUserModal() {
+    this._editingUser = null;
+    document.getElementById('modal-user-title').innerHTML = '<i class="bi bi-person-plus me-2"></i>Tambah User';
+    document.getElementById('user-row-index').value = '';
+    document.getElementById('user-id').value = '';
+    document.getElementById('user-nama').value = '';
+    document.getElementById('user-username').value = '';
+    document.getElementById('user-password').value = '';
+    document.getElementById('user-role').value = 'User';
+    document.getElementById('user-status').value = 'Aktif';
+    document.getElementById('user-id').readOnly = false;
+    document.getElementById('user-username').readOnly = false;
+    document.getElementById('pwd-edit-hint').textContent = '(wajib diisi)';
+    document.getElementById('user-password').required = true;
+    new bootstrap.Modal(document.getElementById('modal-user')).show();
+  },
+
+  showEditUserModal(u) {
+    this._editingUser = u;
+    document.getElementById('modal-user-title').innerHTML = '<i class="bi bi-pencil me-2"></i>Edit User';
+    document.getElementById('user-row-index').value = u.rowIndex;
+    document.getElementById('user-id').value = u.id;
+    document.getElementById('user-nama').value = u.nama;
+    document.getElementById('user-username').value = u.username;
+    document.getElementById('user-password').value = '';
+    document.getElementById('user-role').value = u.role;
+    document.getElementById('user-status').value = u.status;
+    document.getElementById('user-id').readOnly = true;
+    document.getElementById('user-username').readOnly = true;
+    document.getElementById('pwd-edit-hint').textContent = '(kosongkan jika tidak diubah)';
+    document.getElementById('user-password').required = false;
+    new bootstrap.Modal(document.getElementById('modal-user')).show();
+  },
+
+  saveUser() {
+    const rowIndex = document.getElementById('user-row-index').value;
+    const userData = {
+      id:       document.getElementById('user-id').value.trim(),
+      nama:     document.getElementById('user-nama').value.trim(),
+      username: document.getElementById('user-username').value.trim(),
+      password: document.getElementById('user-password').value,
+      role:     document.getElementById('user-role').value,
+      status:   document.getElementById('user-status').value
+    };
+
+    if (!userData.id || !userData.nama || !userData.username) {
+      this._swal('warning', 'Peringatan', 'ID, nama, dan username wajib diisi.'); return;
+    }
+    if (!rowIndex && !userData.password) {
+      this._swal('warning', 'Peringatan', 'Password wajib diisi untuk user baru.'); return;
+    }
+    if (userData.password && userData.password.length < 6) {
+      this._swal('warning', 'Peringatan', 'Password minimal 6 karakter.'); return;
+    }
+
+    const spn = document.getElementById('user-save-spinner');
+    spn.classList.remove('d-none');
+
+    const onSuccess = res => {
+      spn.classList.add('d-none');
+      if (res.success) {
+        bootstrap.Modal.getInstance(document.getElementById('modal-user'))?.hide();
+        Swal.fire({ icon:'success', title:'Berhasil!', confirmButtonColor:'#059669', timer:2000, showConfirmButton:false });
+        this.loadUsers();
+      } else { this._swal('error', 'Gagal', res.message); }
+    };
+    const onErr = err => { spn.classList.add('d-none'); this._swal('error', 'Error', err.message); };
+
+    if (rowIndex) {
+      google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onErr)
+        .updateUser(this.user.username, parseInt(rowIndex), userData);
+    } else {
+      google.script.run.withSuccessHandler(onSuccess).withFailureHandler(onErr)
+        .addUser(this.user.username, userData);
+    }
+  },
+
+  toggleStatus(targetUsername, currentStatus) {
+    const action = currentStatus === 'Aktif' ? 'nonaktifkan' : 'aktifkan';
+    Swal.fire({ title:'Konfirmasi', html:'<b>'+action+'</b> user <b>'+targetUsername+'</b>?', icon:'question',
+      showCancelButton:true, confirmButtonColor:'#059669', cancelButtonColor:'#94a3b8',
+      confirmButtonText:'Ya', cancelButtonText:'Batal'
+    }).then(r => {
+      if (!r.isConfirmed) return;
+      google.script.run
+        .withSuccessHandler(res => {
+          if (res.success) { Swal.fire({ icon:'success', title:'Status diperbarui', confirmButtonColor:'#059669', timer:1500, showConfirmButton:false }); this.loadUsers(); }
+          else { this._swal('error', 'Gagal', res.message); }
+        })
+        .withFailureHandler(err => this._swal('error', 'Error', err.message))
+        .toggleUserStatus(this.user.username, targetUsername);
+    });
+  },
+
+  // ─── ADMIN: REFERENSI ────────────────────────────────────
+  loadKategori() {
+    document.getElementById('list-kategori').innerHTML = '<div class="text-center"><div class="spinner-border text-emerald"></div></div>';
+    google.script.run
+      .withSuccessHandler(list => {
+        const box = document.getElementById('list-kategori');
+        if (!list.length) { box.innerHTML = '<div class="empty-state" style="padding:1.5rem"><i class="bi bi-tags" style="font-size:2rem"></i><p>Belum ada kategori</p></div>'; return; }
+        box.innerHTML = list.map(item =>
+          '<div class="kategori-item"><span><i class="bi bi-tag-fill me-2" style="color:var(--em-500)"></i>'+this._esc(item)+'</span>' +
+          '<button class="btn btn-sm btn-outline-danger" onclick="App.deleteKategori(\''+item.replace(/'/g,"\\'").replace(/"/g,'&quot;')+'\')"><i class="bi bi-trash3"></i></button></div>'
+        ).join('');
+        this._loadJenisAktivitas();
+      })
+      .getJenisAktivitas();
+  },
+
+  addKategori() {
+    const val = document.getElementById('inp-kategori-baru').value.trim();
+    if (!val) { this._swal('warning', 'Peringatan', 'Nama kategori tidak boleh kosong.'); return; }
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res.success) { document.getElementById('inp-kategori-baru').value = ''; this.loadKategori(); Swal.fire({ icon:'success', title:'Berhasil!', text:'"'+val+'" ditambahkan.', confirmButtonColor:'#059669', timer:2000, showConfirmButton:false }); }
+        else { this._swal('error', 'Gagal', res.message); }
+      })
+      .withFailureHandler(err => this._swal('error', 'Error', err.message))
+      .manageReferensi(this.user.username, 'add', val);
+  },
+
+  deleteKategori(val) {
+    Swal.fire({ title:'Hapus Kategori?', html:'Kategori <b>"'+this._esc(val)+'"</b> akan dihapus.', icon:'warning',
+      showCancelButton:true, confirmButtonColor:'#dc2626', cancelButtonColor:'#94a3b8',
+      confirmButtonText:'Hapus', cancelButtonText:'Batal'
+    }).then(r => {
+      if (!r.isConfirmed) return;
+      google.script.run
+        .withSuccessHandler(res => {
+          if (res.success) { this.loadKategori(); Swal.fire({ icon:'success', title:'Dihapus!', confirmButtonColor:'#059669', timer:1500, showConfirmButton:false }); }
+          else { this._swal('error', 'Gagal', res.message); }
+        })
+        .withFailureHandler(err => this._swal('error', 'Error', err.message))
+        .manageReferensi(this.user.username, 'delete', val);
+    });
+  },
+
+  // ─── UBAH PASSWORD ───────────────────────────────────────
+  changePassword(e) {
+    e.preventDefault();
+    const lama       = document.getElementById('pwd-lama').value;
+    const baru       = document.getElementById('pwd-baru').value;
+    const konfirmasi = document.getElementById('pwd-konfirmasi').value;
+
+    if (baru !== konfirmasi) { this._swal('warning', 'Peringatan', 'Konfirmasi password tidak cocok.'); return; }
+    if (baru.length < 6)     { this._swal('warning', 'Peringatan', 'Password baru minimal 6 karakter.'); return; }
+
+    const btn = document.getElementById('btn-ubah-pwd');
+    const spn = document.getElementById('pwd-spinner');
+    btn.disabled = true; spn.classList.remove('d-none');
+
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.disabled = false; spn.classList.add('d-none');
+        if (res.success) {
+          Swal.fire({ icon:'success', title:'Password Berhasil Diubah!', text:'Password telah dienkripsi dan disimpan.', confirmButtonColor:'#059669' });
+          document.getElementById('form-ubah-pwd').reset();
+          document.getElementById('pwd-strength-wrap').style.display = 'none';
+        } else { this._swal('error', 'Gagal', res.message); }
+      })
+      .withFailureHandler(err => { btn.disabled = false; spn.classList.add('d-none'); this._swal('error', 'Error', err.message); })
+      .changePassword(this.user.username, lama, baru);
+  },
+
+  togglePwd(inputId, btn) {
+    const inp = document.getElementById(inputId);
+    inp.type  = inp.type === 'password' ? 'text' : 'password';
+    btn.querySelector('i').className = 'bi bi-eye' + (inp.type === 'text' ? '-slash' : '') + ' text-muted';
+  },
+
+  _checkPwdStrength(val) {
+    const wrap  = document.getElementById('pwd-strength-wrap');
+    const bar   = document.getElementById('pwd-strength-bar');
+    const label = document.getElementById('pwd-strength-label');
+    if (!val) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    let score = 0;
+    if (val.length >= 8)              score++;
+    if (val.length >= 12)             score++;
+    if (/[A-Z]/.test(val))           score++;
+    if (/[0-9]/.test(val))           score++;
+    if (/[^A-Za-z0-9]/.test(val))    score++;
+    const levels = [
+      { pct:20, color:'#ef4444', text:'Sangat Lemah' },
+      { pct:40, color:'#f97316', text:'Lemah' },
+      { pct:60, color:'#eab308', text:'Cukup' },
+      { pct:80, color:'#22c55e', text:'Kuat' },
+      { pct:100,color:'#059669', text:'Sangat Kuat' }
+    ];
+    const lv = levels[Math.min(score, 4)];
+    bar.style.width = lv.pct + '%'; bar.style.background = lv.color;
+    label.textContent = lv.text; label.style.color = lv.color;
+  },
+
+  // ─── HELPERS ─────────────────────────────────────────────
+  _statusBadge(s) {
+    const m = { 'Selesai':'badge-selesai', 'Sedang Berjalan':'badge-berjalan', 'Tertunda':'badge-tertunda' };
+    return '<span class="badge '+(m[s]||'')+'">'+this._esc(s||'—')+'</span>';
+  },
+  _kehadiranBadge(s) {
+    const m = { 'Hadir':'badge-hadir','WFO':'badge-wfo','WFH':'badge-wfh','Izin':'badge-izin','Sakit':'badge-sakit' };
+    return '<span class="badge '+(m[s]||'')+'">'+this._esc(s||'—')+'</span>';
+  },
+  _roleBadge(r) {
+    const m = { 'Owner':'role-badge-owner','Admin':'role-badge-admin','User':'role-badge-user' };
+    return '<span class="badge '+(m[r]||'')+'">'+this._esc(r||'—')+'</span>';
+  },
+  _fmtTgl(str) {
+    if (!str) return '—';
+    try { return new Date(str+'T00:00:00').toLocaleDateString('id-ID', { day:'numeric', month:'short', year:'numeric' }); }
+    catch (_) { return str; }
+  },
+  _esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  },
+  _swal(icon, title, text) { return Swal.fire({ icon, title, text, confirmButtonColor:'#059669' }); },
+  _loading(title) { Swal.fire({ title, allowOutsideClick:false, didOpen:()=>Swal.showLoading() }); }
+};
+
+window.addEventListener('load', () => App.init());
+
+// ─── PUBLIC STATISTIK PAGE ────────────────────────────────
+(function initPublicPage() {
+  const el = document.getElementById('pub-hadir');
+  if (!el) return;
+  const tick = () => {
+    const now = new Date(), pad = n => String(n).padStart(2,'0');
+    const c = document.getElementById('pub-clock');
+    if (c) c.textContent = pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+    const d = document.getElementById('pub-date');
+    if (d) d.textContent = now.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  };
+  tick(); setInterval(tick, 1000);
+  google.script.run
+    .withSuccessHandler(data => {
+      document.getElementById('pub-hadir').textContent = (data.counts.Hadir||0)+(data.counts.WFO||0);
+      document.getElementById('pub-wfh').textContent   = data.counts.WFH||0;
+      document.getElementById('pub-izin').textContent  = data.counts.Izin||0;
+      document.getElementById('pub-sakit').textContent = data.counts.Sakit||0;
+      const trend = data.trend||{}, days = Object.keys(trend);
+      const maxVal = Math.max(...days.map(d => trend[d].hadir+trend[d].tidak), 1);
+      const dayNames = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
+      const bars = days.map(tgl => {
+        const {hadir, tidak} = trend[tgl];
+        const total = hadir+tidak||0;
+        const hPct  = Math.round((hadir/maxVal)*120);
+        const nPct  = Math.round((tidak/maxVal)*120);
+        const date  = new Date(tgl+'T00:00:00');
+        return '<div class="trend-bar-group"><div class="trend-label-count">'+total+'</div><div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;justify-content:flex-end;width:100%">'+(tidak?'<div class="trend-bar trend-bar-tidak" style="height:'+nPct+'px"></div>':'')+(hadir?'<div class="trend-bar trend-bar-hadir" style="height:'+hPct+'px"></div>':'')+((!total)?'<div class="trend-bar" style="height:4px;background:#e2e8f0"></div>':'')+'</div><div class="trend-label-day">'+dayNames[date.getDay()]+'<br>'+date.getDate()+'</div></div>';
+      }).join('');
+      document.getElementById('trend-chart').innerHTML = '<div class="trend-legend"><span><span class="legend-dot" style="background:var(--em-400)"></span>Hadir/WFH</span><span><span class="legend-dot" style="background:#fca5a5"></span>Izin/Sakit</span></div><div class="trend-bars">'+bars+'</div>';
+    })
+    .withFailureHandler(err => { document.getElementById('trend-chart').innerHTML = '<p class="text-danger small text-center">'+(err.message||'Gagal')+'</p>'; })
+    .getStatistikPublik();
+})();
+</script>

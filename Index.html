@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><?= isPublicPage ? 'Statistik Kehadiran' : 'Absensi dan Input Kegiatan' ?></title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/sweetalert2@11/dist/sweetalert2.min.css" />
+  <?!= include('css') ?>
+  <!-- PWA -->
+  <meta name="theme-color" content="#059669" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Absensi CSI" />
+  <link rel="apple-touch-icon" id="pwa-apple-icon" sizes="180x180" />
+  <link rel="manifest" id="pwa-manifest" />
+  <script>
+  (function(){
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#065f46"/><g fill="#ffffff"><path d="M256 96 L160 150 L160 200 L192 200 L192 170 L256 136 L320 170 L320 200 L352 200 L352 150 Z"/><rect x="192" y="200" width="128" height="170" rx="4"/><rect x="224" y="240" width="30" height="40" rx="3" fill="#a7f3d0"/><rect x="258" y="240" width="30" height="40" rx="3" fill="#a7f3d0"/><rect x="224" y="300" width="64" height="70" rx="3" fill="#a7f3d0"/></g><circle cx="370" cy="340" r="70" fill="#10b981"/><path d="M340 340 L362 362 L400 318" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+    function svgToDataUrl(s){ return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(s))); }
+    function makePng(svgStr, size, cb){
+      var img = new Image();
+      var url = svgToDataUrl(svgStr);
+      img.onload = function(){
+        var c = document.createElement('canvas');
+        c.width = c.height = size;
+        var ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, size, size);
+        cb(c.toDataURL('image/png'));
+      };
+      img.onerror = function(){ cb(url); };
+      img.src = url;
+    }
+    var svgUrl = svgToDataUrl(svg);
+    // Set apple-touch-icon
+    var appleLink = document.getElementById('pwa-apple-icon');
+    if (appleLink) {
+      makePng(svg, 180, function(pngUrl){
+        appleLink.href = pngUrl;
+      });
+    }
+    // Build manifest with SVG icon (PNG generated async separately)
+    var icons = [
+      { src: svgUrl, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' },
+      { src: svgUrl, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' }
+    ];
+    var manifest = {
+      name: 'Absensi dan Input Kegiatan',
+      short_name: 'Absensi SASHINDO PROJECT',
+      description: 'Sistem Absensi dan Input Kegiatan SASHINDO PROJECT',
+      start_url: window.location.href,
+      display: 'standalone',
+      orientation: 'portrait',
+      theme_color: '#059669',
+      background_color: '#065f46',
+      icons: icons
+    };
+    var manifestStr = JSON.stringify(manifest);
+    var manifestUrl = 'data:application/manifest+json;base64,' + btoa(unescape(encodeURIComponent(manifestStr)));
+    var mLink = document.getElementById('pwa-manifest');
+    if (mLink) mLink.href = manifestUrl;
+    // Upgrade icons to PNG once canvas ready
+    makePng(svg, 192, function(png192){
+      makePng(svg, 512, function(png512){
+        manifest.icons = [
+          { src: png192, sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+          { src: png512, sizes: '512x512', type: 'image/png', purpose: 'any maskable' }
+        ];
+        var updated = 'data:application/manifest+json;base64,' + btoa(unescape(encodeURIComponent(JSON.stringify(manifest))));
+        if (mLink) mLink.href = updated;
+      });
+    });
+  })();
+  </script>
+</head>
+<body>
+
+<? if (isPublicPage) { ?>
+<!-- ═══ PUBLIC STATISTIK PAGE ═══════════════════════════════ -->
+<div class="statistik-public-bg min-vh-100">
+  <nav class="statistik-nav">
+    <div class="d-flex align-items-center gap-2">
+      <div class="brand-icon" style="width:36px;height:36px;font-size:1.1rem"><i class="bi bi-building-check"></i></div>
+      <div>
+        <div class="brand-title" style="color:#fff">Absensi dan Input Kegiatan</div>
+        <div class="brand-subtitle" style="color:rgba(255,255,255,.55)">Statistik Real-Time</div>
+      </div>
+    </div>
+    <div class="live-clock" id="pub-clock" style="color:#fff;font-size:1.1rem">--:--:--</div>
+  </nav>
+  <div class="container py-4">
+    <div class="text-center mb-4">
+      <h2 class="fw-bold text-white mb-1">Statistik Kehadiran Hari Ini</h2>
+      <p class="text-white opacity-75" id="pub-date">—</p>
+    </div>
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-3"><div class="pub-stat-card">
+        <div class="pub-stat-icon" style="background:#d1fae5;color:#065f46"><i class="bi bi-building"></i></div>
+        <div class="pub-stat-number" id="pub-hadir">—</div>
+        <div class="pub-stat-label">Hadir / WFO</div>
+      </div></div>
+      <div class="col-6 col-md-3"><div class="pub-stat-card">
+        <div class="pub-stat-icon" style="background:#dbeafe;color:#1e40af"><i class="bi bi-house-door"></i></div>
+        <div class="pub-stat-number" id="pub-wfh">—</div>
+        <div class="pub-stat-label">WFH</div>
+      </div></div>
+      <div class="col-6 col-md-3"><div class="pub-stat-card">
+        <div class="pub-stat-icon" style="background:#fef3c7;color:#92400e"><i class="bi bi-file-earmark-text"></i></div>
+        <div class="pub-stat-number" id="pub-izin">—</div>
+        <div class="pub-stat-label">Izin</div>
+      </div></div>
+      <div class="col-6 col-md-3"><div class="pub-stat-card">
+        <div class="pub-stat-icon" style="background:#fee2e2;color:#991b1b"><i class="bi bi-heart-pulse"></i></div>
+        <div class="pub-stat-number" id="pub-sakit">—</div>
+        <div class="pub-stat-label">Sakit</div>
+      </div></div>
+    </div>
+    <div class="card mb-4">
+      <div class="card-header-emerald"><i class="bi bi-bar-chart-line me-2"></i>Tren 7 Hari Terakhir</div>
+      <div class="card-body" id="trend-chart"><div class="text-center py-3"><div class="spinner-border text-emerald"></div></div></div>
+    </div>
+    <div class="text-center">
+      <a href="?" class="btn btn-emerald px-4"><i class="bi bi-box-arrow-in-right me-2"></i>Login ke Sistem</a>
+      <p class="text-white opacity-50 mt-3 small">© 2026 SASHINDO PROJECT</p>
+    </div>
+  </div>
+</div>
+
+<? } else { ?>
+<!-- ═══ LOGIN PAGE ════════════════════════════════════════════ -->
+<div id="page-login" class="login-bg d-flex align-items-center justify-content-center">
+  <div class="login-card">
+    <div class="login-header">
+      <div class="login-logo"><i class="bi bi-building-check"></i></div>
+      <h4 class="fw-bold mb-1">Absensi dan Input Kegiatan</h4>
+      <p class="mb-0 opacity-75 small">Masuk untuk melanjutkan</p>
+    </div>
+    <div class="login-body">
+      <div class="mb-3">
+        <label class="form-label fw-semibold text-muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.5px">Username</label>
+        <div class="input-group">
+          <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-person"></i></span>
+          <input type="text" id="inp-username" class="form-control border-start-0 ps-1" placeholder="Masukkan username" />
+        </div>
+      </div>
+      <div class="mb-4">
+        <label class="form-label fw-semibold text-muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.5px">Password</label>
+        <div class="input-group">
+          <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-lock"></i></span>
+          <input type="password" id="inp-password" class="form-control border-start-0 ps-1" placeholder="Masukkan password" />
+          <button class="btn btn-light border" type="button" id="btn-toggle-pwd" style="border-left:none!important">
+            <i class="bi bi-eye text-muted"></i>
+          </button>
+        </div>
+      </div>
+      <button id="btn-login" class="btn btn-emerald w-100 py-2 fw-semibold">
+        <span id="login-text"><i class="bi bi-box-arrow-in-right me-2"></i>Masuk</span>
+        <span id="login-spinner" class="spinner-border spinner-border-sm ms-2 d-none"></span>
+      </button>
+    </div>
+    <div class="login-footer">
+      <small class="text-muted">© 2026 SASHINDO PROJECT</small>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ APP SHELL ════════════════════════════════════════════ -->
+<div id="page-app" class="d-none">
+  <div id="sidebar-overlay" class="sidebar-overlay" onclick="App.closeSidebar()"></div>
+
+  <!-- SIDEBAR -->
+  <nav id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon"><i class="bi bi-building-check"></i></div>
+      <div>
+        <div class="brand-title">Absensi &amp; Kegiatan</div>
+        <div class="brand-subtitle">SASHINDO PROJECT</div>
+      </div>
+    </div>
+    <div class="sidebar-user">
+      <div class="user-avatar" id="sidebar-avatar">U</div>
+      <div style="min-width:0">
+        <div class="user-name text-truncate" id="sidebar-nama">Loading...</div>
+        <div class="user-role" id="sidebar-role-badge">User</div>
+      </div>
+    </div>
+    <div class="sidebar-divider"></div>
+
+    <ul class="sidebar-nav">
+      <!-- User Role -->
+      <li class="nav-item-label user-only d-none">Menu Utama</li>
+      <li class="user-only d-none"><a href="#" class="sidebar-link active" data-view="dashboard" onclick="App.showView('dashboard');return false;">
+        <i class="bi bi-speedometer2"></i><span>Dashboard</span>
+      </a></li>
+      <li class="user-only d-none"><a href="#" class="sidebar-link" data-view="input-tugas" onclick="App.showView('input-tugas');return false;">
+        <i class="bi bi-plus-circle"></i><span>Input Kegiatan</span>
+      </a></li>
+      <li class="user-only d-none"><a href="#" class="sidebar-link" data-view="riwayat" onclick="App.showView('riwayat');return false;">
+        <i class="bi bi-clock-history"></i><span>Riwayat Kegiatan</span>
+      </a></li>
+
+      <!-- Owner only -->
+      <li class="nav-item-label owner-only d-none">Statistik</li>
+      <li class="owner-only d-none"><a href="#" class="sidebar-link" data-view="rekap" onclick="App.showView('rekap');return false;">
+        <i class="bi bi-bar-chart-line"></i><span>Rekap Kehadiran</span>
+      </a></li>
+      <li class="owner-only d-none"><a href="#" class="sidebar-link" data-view="all-tugas" onclick="App.showView('all-tugas');return false;">
+        <i class="bi bi-list-task"></i><span>Semua Kegiatan</span>
+      </a></li>
+
+      <!-- Admin only -->
+      <li class="nav-item-label admin-only d-none">Manajemen</li>
+      <li class="admin-only d-none"><a href="#" class="sidebar-link" data-view="kelola-user" onclick="App.showView('kelola-user');return false;">
+        <i class="bi bi-people"></i><span>Kelola User</span>
+      </a></li>
+      <li class="admin-only d-none"><a href="#" class="sidebar-link" data-view="kategori" onclick="App.showView('kategori');return false;">
+        <i class="bi bi-tags"></i><span>Kelola Referensi</span>
+      </a></li>
+
+      <!-- Semua Role -->
+      <li class="nav-item-label">Akun</li>
+      <li><a href="#" class="sidebar-link" data-view="ubah-password" onclick="App.showView('ubah-password');return false;">
+        <i class="bi bi-key"></i><span>Ubah Password</span>
+      </a></li>
+    </ul>
+
+    <div class="sidebar-bottom">
+      <a href="#" class="sidebar-link" onclick="App.logout();return false;">
+        <i class="bi bi-box-arrow-left"></i><span>Keluar</span>
+      </a>
+    </div>
+  </nav>
+
+  <!-- MAIN CONTENT -->
+  <div id="main-content">
+    <nav class="topbar">
+      <button class="btn-sidebar-toggle" onclick="App.toggleSidebar()"><i class="bi bi-list"></i></button>
+      <div class="topbar-title" id="topbar-title">Dashboard</div>
+      <div class="topbar-right">
+        <div class="live-clock" id="live-clock">--:--:--</div>
+        <div class="topbar-date" id="topbar-date">-</div>
+      </div>
+    </nav>
+
+    <div class="views-container">
+
+      <!-- ── DASHBOARD ──────────────────────────────────────── -->
+      <div id="view-dashboard" class="view active">
+        <div class="view-header">
+          <h5 class="view-title">Selamat Datang, <span id="dash-nama" class="text-emerald">-</span>!</h5>
+          <p class="view-subtitle">Pantau kehadiran dan kegiatan Anda hari ini</p>
+        </div>
+        <div class="row g-3 mb-3">
+          <div class="col-12 col-lg-6">
+            <div class="card h-100">
+              <div class="card-header-emerald"><i class="bi bi-calendar-check me-2"></i>Status Kehadiran Hari Ini</div>
+              <div class="card-body d-flex align-items-center justify-content-center py-4">
+                <div id="absen-status-display" class="text-center w-100">
+                  <div class="spinner-border text-emerald" role="status"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <div class="card h-100">
+              <div class="card-header-emerald"><i class="bi bi-graph-up me-2"></i>Ringkasan Kegiatan Hari Ini</div>
+              <div class="card-body py-2">
+                <div class="stat-item"><span class="stat-label"><i class="bi bi-check2-circle me-2 text-success"></i>Selesai</span><span class="stat-value" id="stat-selesai">—</span></div>
+                <div class="stat-item"><span class="stat-label"><i class="bi bi-hourglass-split me-2 text-primary"></i>Sedang Berjalan</span><span class="stat-value" id="stat-jalan">—</span></div>
+                <div class="stat-item"><span class="stat-label"><i class="bi bi-pause-circle me-2 text-warning"></i>Tertunda</span><span class="stat-value" id="stat-tertunda">—</span></div>
+                <div class="stat-item border-0 pt-2"><span class="stat-label fw-bold text-dark"><i class="bi bi-layers me-2 text-emerald"></i>Total</span><span class="stat-value fw-bold fs-5" id="stat-total">—</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header-emerald d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-clock-history me-2"></i>Kegiatan Terbaru</span>
+            <button class="btn btn-sm btn-outline-light" onclick="App.showView('riwayat')"><i class="bi bi-arrow-right me-1"></i>Lihat Semua</button>
+          </div>
+          <div class="card-body p-0" id="dash-recent-tasks">
+            <div class="p-4 text-center"><div class="spinner-border spinner-border-sm text-emerald"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── INPUT TUGAS ─────────────────────────────────────── -->
+      <div id="view-input-tugas" class="view">
+        <div class="view-header">
+          <h5 class="view-title">Input Kegiatan Harian</h5>
+          <p class="view-subtitle">Catat rincian kegiatan yang Anda lakukan</p>
+        </div>
+        <div class="card">
+          <div class="card-header-emerald"><i class="bi bi-pencil-square me-2"></i>Form Input Kegiatan</div>
+          <div class="card-body">
+            <form id="form-tugas" onsubmit="App.submitTugas(event)">
+              <div class="row g-3">
+                <div class="col-12 col-sm-6">
+                  <label class="form-label">Tanggal <span class="text-danger">*</span></label>
+                  <input type="date" id="tugas-tanggal" class="form-control" required />
+                </div>
+                <div class="col-12 col-sm-6">
+                  <label class="form-label">Jenis Kegiatan <span class="text-danger">*</span></label>
+                  <select id="tugas-jenis" class="form-select" required>
+                    <option value="">— Pilih Kegiatan —</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Detail Kegiatan <span class="text-danger">*</span></label>
+                  <textarea id="tugas-detail" class="form-control" rows="3" placeholder="Deskripsikan kegiatan yang dilakukan..." required></textarea>
+                </div>
+
+                <!-- Instansi / PIC -->
+                <div class="col-12"><div class="form-section-label"><i class="bi bi-building me-1"></i>Informasi Instansi / Klien</div></div>
+                <div class="col-12 col-sm-6">
+                  <label class="form-label">Instansi / Perusahaan <span class="text-muted small">(opsional)</span></label>
+                  <input type="text" id="tugas-instansi" class="form-control" placeholder="Nama instansi atau perusahaan" />
+                </div>
+                <div class="col-12 col-sm-6">
+                  <label class="form-label">PIC (Person in Charge) <span class="text-muted small">(opsional)</span></label>
+                  <input type="text" id="tugas-pic" class="form-control" placeholder="Nama kontak / PIC" />
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Alamat <span class="text-muted small">(opsional)</span></label>
+                  <input type="text" id="tugas-alamat" class="form-control" placeholder="Alamat instansi / lokasi kegiatan" />
+                </div>
+
+                <!-- Waktu & Status -->
+                <div class="col-12"><div class="form-section-label"><i class="bi bi-clock me-1"></i>Waktu &amp; Status</div></div>
+                <div class="col-12 col-sm-4">
+                  <label class="form-label">Waktu Mulai <span class="text-danger">*</span></label>
+                  <input type="time" id="tugas-mulai" class="form-control" required />
+                </div>
+                <div class="col-12 col-sm-4">
+                  <label class="form-label">Waktu Selesai <span class="text-muted small">(opsional)</span></label>
+                  <input type="time" id="tugas-selesai" class="form-control" />
+                </div>
+                <div class="col-12 col-sm-4">
+                  <label class="form-label">Status Progres <span class="text-danger">*</span></label>
+                  <select id="tugas-status" class="form-select" required>
+                    <option value="">— Pilih Status —</option>
+                    <option value="Selesai">✅ Selesai</option>
+                    <option value="Sedang Berjalan">🔄 Sedang Berjalan</option>
+                    <option value="Tertunda">⏸ Tertunda</option>
+                  </select>
+                </div>
+                <div class="col-12 col-sm-6">
+                  <label class="form-label">Link Bukti <span class="text-muted small">(opsional)</span></label>
+                  <input type="url" id="tugas-link" class="form-control" placeholder="https://..." />
+                </div>
+                <div class="col-12 col-sm-6">
+                  <label class="form-label">Kendala <span class="text-muted small">(opsional)</span></label>
+                  <input type="text" id="tugas-kendala" class="form-control" placeholder="Kendala yang dihadapi..." />
+                </div>
+                <div class="col-12 d-flex gap-2 flex-wrap">
+                  <button type="submit" class="btn btn-emerald px-4 py-2" id="btn-submit-tugas">
+                    <i class="bi bi-send-fill me-2"></i>Submit Kegiatan
+                    <span id="submit-spinner" class="spinner-border spinner-border-sm ms-2 d-none"></span>
+                  </button>
+                  <button type="button" class="btn btn-outline-secondary px-4 py-2" onclick="App.resetTugasForm()">
+                    <i class="bi bi-x-lg me-1"></i>Reset
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── RIWAYAT ─────────────────────────────────────────── -->
+      <div id="view-riwayat" class="view">
+        <div class="view-header">
+          <h5 class="view-title">Riwayat Kegiatan</h5>
+          <p class="view-subtitle">Semua kegiatan yang sudah dicatat</p>
+        </div>
+        
+        <div class="row g-3 mb-3">
+          <div class="col-4"><div class="card stat-card stat-hadir"><div class="card-body text-center py-2"><div class="stat-card-number" id="riwayat-stat-selesai">—</div><div class="stat-card-label" style="color:#059669">Selesai</div></div></div></div>
+          <div class="col-4"><div class="card stat-card stat-izin"><div class="card-body text-center py-2"><div class="stat-card-number" id="riwayat-stat-berjalan">—</div><div class="stat-card-label text-primary">Sed. Berjalan</div></div></div></div>
+          <div class="col-4"><div class="card stat-card stat-sakit"><div class="card-body text-center py-2"><div class="stat-card-number" id="riwayat-stat-tertunda">—</div><div class="stat-card-label text-danger">Tertunda</div></div></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header-emerald d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="bi bi-table me-2"></i>Data Kegiatan</span>
+            <div class="d-flex gap-2 align-items-center">
+              <input type="date" id="filter-riwayat-tanggal" class="form-control form-control-sm" style="width:130px" onchange="App.filterRiwayat()" />
+              <select id="riwayat-per-page" class="form-select form-select-sm" style="width:75px" onchange="App.changeRiwayatPerPage()">
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+              </select>
+              <button class="btn btn-sm btn-outline-light" onclick="App.loadRiwayatKegiatan()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+          </div>
+          <div id="table-riwayat-container" class="table-responsive border-bottom">
+            <div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>
+          </div>
+          <div class="card-footer bg-white d-flex justify-content-between align-items-center" id="riwayat-pagination-container" style="display:none !important">
+            <span class="small text-muted" id="riwayat-page-info">Menampilkan -</span>
+            <div class="btn-group">
+              <button class="btn btn-sm btn-outline-secondary" id="btn-riwayat-prev" onclick="App.changeRiwayatPage(-1)">Sebelumnya</button>
+              <button class="btn btn-sm btn-outline-secondary" id="btn-riwayat-next" onclick="App.changeRiwayatPage(1)">Selanjutnya</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── REKAP (Owner) ────────────────────────────────────── -->
+      <div id="view-rekap" class="view">
+        <div class="view-header">
+          <h5 class="view-title">Rekap Kehadiran Karyawan</h5>
+          <p class="view-subtitle">Data absensi seluruh karyawan</p>
+        </div>
+        <div class="row g-3 mb-3">
+          <div class="col-6 col-md-3"><div class="card stat-card stat-hadir"><div class="card-body text-center py-3"><div class="stat-card-number" id="rc-hadir">—</div><div class="stat-card-label">Hadir/WFO</div></div></div></div>
+          <div class="col-6 col-md-3"><div class="card stat-card stat-wfh"><div class="card-body text-center py-3"><div class="stat-card-number" id="rc-wfh">—</div><div class="stat-card-label">WFH</div></div></div></div>
+          <div class="col-6 col-md-3"><div class="card stat-card stat-izin"><div class="card-body text-center py-3"><div class="stat-card-number" id="rc-izin">—</div><div class="stat-card-label">Izin</div></div></div></div>
+          <div class="col-6 col-md-3"><div class="card stat-card stat-sakit"><div class="card-body text-center py-3"><div class="stat-card-number" id="rc-sakit">—</div><div class="stat-card-label">Sakit</div></div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-header-emerald d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="bi bi-calendar-week me-2"></i>Detail Absensi</span>
+            <div class="d-flex gap-2 align-items-center">
+              <input type="date" id="filter-tanggal" class="form-control form-control-sm" style="width:145px" />
+              <button class="btn btn-sm btn-light fw-semibold" onclick="App.filterRekap()">Filter</button>
+              <button class="btn btn-sm btn-outline-light" onclick="App.loadRekap()">Semua</button>
+            </div>
+          </div>
+          <div id="table-rekap-container" class="table-responsive">
+            <div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── SEMUA TUGAS (Owner) ────────────────────────────── -->
+      <div id="view-all-tugas" class="view">
+        <div class="view-header">
+          <h5 class="view-title">Semua Kegiatan Karyawan</h5>
+          <p class="view-subtitle">Log kegiatan seluruh tim</p>
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col-4"><div class="card stat-card stat-hadir"><div class="card-body text-center py-2"><div class="stat-card-number" id="all-tugas-stat-selesai">—</div><div class="stat-card-label" style="color:#059669">Selesai</div></div></div></div>
+          <div class="col-4"><div class="card stat-card stat-izin"><div class="card-body text-center py-2"><div class="stat-card-number" id="all-tugas-stat-berjalan">—</div><div class="stat-card-label text-primary">Sed. Berjalan</div></div></div></div>
+          <div class="col-4"><div class="card stat-card stat-sakit"><div class="card-body text-center py-2"><div class="stat-card-number" id="all-tugas-stat-tertunda">—</div><div class="stat-card-label text-danger">Tertunda</div></div></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header-emerald d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="bi bi-list-task me-2"></i>Data Kegiatan</span>
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+              <select id="filter-all-tugas-user" class="form-select form-select-sm" style="width:150px" onchange="App.filterAllTugas()">
+                <option value="">Semua User</option>
+              </select>
+              <input type="date" id="filter-all-tugas-tanggal" class="form-control form-control-sm" style="width:130px" onchange="App.filterAllTugas()" />
+              <select id="all-tugas-per-page" class="form-select form-select-sm" style="width:75px" onchange="App.changeAllTugasPerPage()">
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+              </select>
+              <button class="btn btn-sm btn-outline-light" onclick="App.loadSemuaTugas()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+          </div>
+          <div id="table-all-tugas-container" class="table-responsive border-bottom">
+            <div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>
+          </div>
+          <div class="card-footer bg-white d-flex justify-content-between align-items-center" id="all-tugas-pagination-container" style="display:none !important">
+            <span class="small text-muted" id="all-tugas-page-info">Menampilkan -</span>
+            <div class="btn-group">
+              <button class="btn btn-sm btn-outline-secondary" id="btn-all-tugas-prev" onclick="App.changeAllTugasPage(-1)">Sebelumnya</button>
+              <button class="btn btn-sm btn-outline-secondary" id="btn-all-tugas-next" onclick="App.changeAllTugasPage(1)">Selanjutnya</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── KELOLA USER (Admin) ────────────────────────────── -->
+      <div id="view-kelola-user" class="view">
+        <div class="view-header">
+          <h5 class="view-title">Kelola User</h5>
+          <p class="view-subtitle">Tambah, edit, dan kelola akses pengguna</p>
+        </div>
+        <div class="card mb-3">
+          <div class="card-header-emerald d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-people me-2"></i>Daftar User</span>
+            <button class="btn btn-sm btn-light fw-semibold" onclick="App.showAddUserModal()">
+              <i class="bi bi-plus-lg me-1"></i>Tambah User
+            </button>
+          </div>
+          <div id="table-users-container" class="table-responsive">
+            <div class="p-4 text-center"><div class="spinner-border text-emerald"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── KELOLA REFERENSI (Admin) ───────────────────────── -->
+      <div id="view-kategori" class="view">
+        <div class="view-header">
+          <h5 class="view-title">Kelola Referensi</h5>
+          <p class="view-subtitle">Tambah atau hapus jenis kegiatan</p>
+        </div>
+        <div class="row g-3">
+          <div class="col-12 col-md-4">
+            <div class="card">
+              <div class="card-header-emerald"><i class="bi bi-plus-circle me-2"></i>Tambah Kategori</div>
+              <div class="card-body">
+                <label class="form-label">Nama Kategori</label>
+                <input type="text" id="inp-kategori-baru" class="form-control mb-3" placeholder="Contoh: Kunjungan Klien" />
+                <button class="btn btn-emerald w-100" onclick="App.addKategori()"><i class="bi bi-plus-lg me-1"></i>Tambahkan</button>
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-md-8">
+            <div class="card">
+              <div class="card-header-emerald d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-tags me-2"></i>Daftar Kategori Aktif</span>
+                <button class="btn btn-sm btn-outline-light" onclick="App.loadKategori()"><i class="bi bi-arrow-clockwise"></i></button>
+              </div>
+              <div class="card-body" id="list-kategori">
+                <div class="text-center"><div class="spinner-border text-emerald"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── UBAH PASSWORD ──────────────────────────────────── -->
+      <div id="view-ubah-password" class="view">
+        <div class="view-header">
+          <h5 class="view-title">Ubah Password</h5>
+          <p class="view-subtitle">Password baru akan langsung terenkripsi di database</p>
+        </div>
+        <div class="row justify-content-center">
+          <div class="col-12 col-md-6 col-lg-5">
+            <div class="card">
+              <div class="card-header-emerald"><i class="bi bi-key me-2"></i>Form Ubah Password</div>
+              <div class="card-body">
+                <form id="form-ubah-pwd" onsubmit="App.changePassword(event)">
+                  <div class="mb-3">
+                    <label class="form-label">Password Lama <span class="text-danger">*</span></label>
+                    <div class="input-group">
+                      <input type="password" id="pwd-lama" class="form-control" placeholder="Masukkan password saat ini" required />
+                      <button type="button" class="btn btn-light border" onclick="App.togglePwd('pwd-lama', this)"><i class="bi bi-eye text-muted"></i></button>
+                    </div>
+                  </div>
+                  <div class="mb-3">
+                    <label class="form-label">Password Baru <span class="text-danger">*</span></label>
+                    <div class="input-group">
+                      <input type="password" id="pwd-baru" class="form-control" placeholder="Minimal 6 karakter" required minlength="6" />
+                      <button type="button" class="btn btn-light border" onclick="App.togglePwd('pwd-baru', this)"><i class="bi bi-eye text-muted"></i></button>
+                    </div>
+                  </div>
+                  <div class="mb-4">
+                    <label class="form-label">Konfirmasi Password Baru <span class="text-danger">*</span></label>
+                    <div class="input-group">
+                      <input type="password" id="pwd-konfirmasi" class="form-control" placeholder="Ulangi password baru" required minlength="6" />
+                      <button type="button" class="btn btn-light border" onclick="App.togglePwd('pwd-konfirmasi', this)"><i class="bi bi-eye text-muted"></i></button>
+                    </div>
+                  </div>
+                  <div class="pwd-strength-wrap mb-3" id="pwd-strength-wrap" style="display:none">
+                    <div class="d-flex justify-content-between mb-1">
+                      <small class="text-muted">Kekuatan Password</small>
+                      <small id="pwd-strength-label">-</small>
+                    </div>
+                    <div class="progress" style="height:5px">
+                      <div id="pwd-strength-bar" class="progress-bar" style="width:0%"></div>
+                    </div>
+                  </div>
+                  <button type="submit" class="btn btn-emerald w-100 py-2 fw-semibold" id="btn-ubah-pwd">
+                    <i class="bi bi-shield-check me-2"></i>Simpan Password Baru
+                    <span id="pwd-spinner" class="spinner-border spinner-border-sm ms-2 d-none"></span>
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /views-container -->
+  </div><!-- /main-content -->
+</div><!-- /page-app -->
+
+<!-- Modal Absen Masuk -->
+<div class="modal fade" id="modal-absen" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg" style="border-radius:16px;overflow:hidden">
+      <div class="modal-header border-0" style="background:linear-gradient(135deg,#065f46,#059669);color:white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-calendar-check me-2"></i>Pilih Status Kehadiran</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-4">
+        <p class="text-muted mb-3 small">Pilih status kehadiran Anda untuk hari ini:</p>
+        <div class="d-grid gap-2">
+          <button class="btn btn-outline-success btn-kehadiran" onclick="App.doAbsenMasuk('Hadir')"><i class="bi bi-building me-2"></i>Hadir — Work From Office (WFO)</button>
+          <button class="btn btn-outline-info btn-kehadiran" onclick="App.doAbsenMasuk('WFH')"><i class="bi bi-house-door me-2"></i>Work From Home (WFH)</button>
+          <button class="btn btn-outline-warning btn-kehadiran" onclick="App.doAbsenMasuk('Izin')"><i class="bi bi-file-earmark-text me-2"></i>Izin</button>
+          <button class="btn btn-outline-danger btn-kehadiran" onclick="App.doAbsenMasuk('Sakit')"><i class="bi bi-heart-pulse me-2"></i>Sakit</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Tambah/Edit User -->
+<div class="modal fade" id="modal-user" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg" style="border-radius:16px;overflow:hidden">
+      <div class="modal-header border-0" style="background:linear-gradient(135deg,#065f46,#059669);color:white">
+        <h5 class="modal-title fw-bold" id="modal-user-title"><i class="bi bi-person-plus me-2"></i>Tambah User</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-4">
+        <input type="hidden" id="user-row-index" value="" />
+        <div class="row g-3">
+          <div class="col-12 col-sm-6">
+            <label class="form-label">ID User <span class="text-danger">*</span></label>
+            <input type="text" id="user-id" class="form-control" placeholder="USR003" required />
+          </div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label">Role <span class="text-danger">*</span></label>
+            <select id="user-role" class="form-select">
+              <option value="User">User</option>
+              <option value="Admin">Admin</option>
+              <option value="Owner">Owner</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Nama Lengkap <span class="text-danger">*</span></label>
+            <input type="text" id="user-nama" class="form-control" placeholder="Nama lengkap karyawan" required />
+          </div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label">Username <span class="text-danger">*</span></label>
+            <input type="text" id="user-username" class="form-control" placeholder="username" required />
+          </div>
+          <div class="col-12 col-sm-6">
+            <label class="form-label">Password <span id="pwd-edit-hint" class="text-muted small">(opsional saat edit)</span></label>
+            <input type="password" id="user-password" class="form-control" placeholder="Min. 6 karakter" />
+          </div>
+          <div class="col-12">
+            <label class="form-label">Status</label>
+            <select id="user-status" class="form-select">
+              <option value="Aktif">Aktif</option>
+              <option value="Nonaktif">Nonaktif</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer border-0 pt-0">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Batal</button>
+        <button type="button" class="btn btn-emerald px-4" onclick="App.saveUser()">
+          <i class="bi bi-floppy me-1"></i>Simpan
+          <span id="user-save-spinner" class="spinner-border spinner-border-sm ms-2 d-none"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<?!= include('js') ?>
+
+<? } ?>
+</body>
+</html>

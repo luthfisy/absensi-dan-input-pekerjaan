@@ -2,7 +2,7 @@
 
 Aplikasi web absensi dan input kegiatan harian berbasis **Google Apps Script** — GPS tracking, manajemen role tiga tingkat, statistik real-time, tanpa server dan tanpa biaya infrastruktur.
 
-![Preview](assets/absensi-dan-input-pekerjaan.jpg)
+![Preview](sashindo-project-absensi-dan-input-pekerjaan-dashboard-owner.jpg)
 
 ---
 
